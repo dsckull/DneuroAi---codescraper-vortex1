@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "CodeScraper AI - Red Team Assistant",
+  "version": "1.0",
+  "description": "Assistente IA para análise de segurança, código e scraping diretamente no navegador.",
+  "permissions": [
+    "sidePanel",
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "side_panel": {
+    "default_path": "index.html"
+  },
+  "action": {
+    "default_title": "Abrir CodeScraper AI"
+  },
+  "icons": {
+    "16": "logo192.png",
+    "48": "logo192.png",
+    "128": "logo192.png"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  }
+}
