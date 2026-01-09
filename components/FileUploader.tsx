@@ -105,6 +105,7 @@ export const FileUploader: React.FC<FileUploaderProps> = ({ onFileLoaded, curren
     if (fileName.startsWith('http')) return <Globe className="w-6 h-6 text-[#6dd58c]" />;
     if (fileName.endsWith('.json')) return <FileJson className="w-6 h-6 text-[#ffd8b4]" />;
     if (fileName.endsWith('.pdf')) return <FileType className="w-6 h-6 text-[#ffb4ab]" />;
+    if (fileName.endsWith('.txt') || fileName.endsWith('.md')) return <FileText className="w-6 h-6 text-[#e3e3e3]" />;
     return <FileCode className="w-6 h-6 text-[#a8c7fa]" />;
   };
 
@@ -148,14 +149,14 @@ export const FileUploader: React.FC<FileUploaderProps> = ({ onFileLoaded, curren
                     <UploadCloud className="w-6 h-6 text-[#a8c7fa]" />
                 </div>
                 <p className="mb-1 text-sm text-[#e3e3e3] font-medium">Clique para enviar</p>
-                <p className="text-xs text-[#8e918f]">PDF, TXT, JSON, CODE</p>
+                <p className="text-xs text-[#8e918f]">PDF, JSON, TXT, MD, HTML, CODE</p>
                 </>
             )}
             </div>
             <input 
                 type="file" 
                 className="hidden" 
-                accept=".pdf,.txt,.md,.json,.js,.jsx,.ts,.tsx,.py,.html,.css,.csv,.xml,.yml,.yaml,.env" 
+                accept=".pdf,.txt,.md,.markdown,.json,.js,.jsx,.ts,.tsx,.py,.html,.css,.csv,.xml,.yml,.yaml,.env" 
                 onChange={handleFileChange} 
                 disabled={isReading} 
             />

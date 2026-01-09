@@ -28,14 +28,35 @@ export interface AppSettings {
   provider: LLMProvider;
   model: string;
   apiKeys: Record<LLMProvider, string>;
-  baseUrl?: string; // Para Ollama ou endpoints compatíveis
+  baseUrl?: string; 
   // Advanced Controls
   temperature: number;
   maxOutputTokens: number;
-  thinkingBudget: number; // 0 para desativar
+  thinkingBudget: number; 
   safetyLevel: 'BLOCK_NONE' | 'BLOCK_ONLY_HIGH' | 'BLOCK_MEDIUM_AND_ABOVE' | 'BLOCK_LOW_AND_ABOVE';
+  // Cost Control
+  historyDepth: number; // Quantas mensagens passadas enviar (Economia de Tokens)
+}
+
+export interface TokenUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
+export interface AnalysisResult {
+  text: string;
+  usage?: TokenUsage;
 }
 
 export type ViewMode = 'chat' | 'browser' | 'agent' | 'sandbox' | 'docs';
 
 export type ThemeColor = 'rose' | 'blue';
+
+export interface FeedbackContextData {
+    messages: Message[];
+    sessionUsage: TokenUsage;
+    currentSection: string;
+    fileInfo: string | null;
+    logs?: string[];
+}

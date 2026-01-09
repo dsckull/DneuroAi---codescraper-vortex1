@@ -9,9 +9,10 @@ import { AutonomousAgent } from './components/AutonomousAgent';
 import { PythonSandbox } from './components/PythonSandbox';
 import { DocumentationHub } from './components/DocumentationHub';
 import { BootSequence } from './components/BootSequence';
-import { UploadedFile, Message, AnalysisStatus, AppSettings, ViewMode, LLMProvider } from './types';
+import { FeedbackWidget } from './components/FeedbackWidget';
+import { UploadedFile, Message, AnalysisStatus, AppSettings, ViewMode, LLMProvider, TokenUsage } from './types';
 import { analyzeContent } from './services/geminiService';
-import { Send, Terminal, Loader2, PanelLeftClose, PanelLeftOpen, MessageSquare, ShieldAlert, Zap, Search, Settings as SettingsIcon, Skull, Swords, Code, MonitorPlay, Bot, Box, ArrowDown, RotateCcw, SplitSquareHorizontal, XCircle, BookOpen, Plus, ChevronRight, Sparkles, Database, ToggleLeft, ToggleRight, MessageCircle, Power } from 'lucide-react';
+import { Send, Terminal, Loader2, PanelLeftClose, PanelLeftOpen, MessageSquare, ShieldAlert, Zap, Search, Settings as SettingsIcon, Skull, Swords, Code, MonitorPlay, Bot, Box, ArrowDown, RotateCcw, SplitSquareHorizontal, XCircle, BookOpen, Plus, ChevronRight, Sparkles, Database, ToggleLeft, ToggleRight, MessageCircle, Power, ArrowLeft, HelpCircle, Mail, Bug } from 'lucide-react';
 
 const STORAGE_KEYS = {
   FILE: 'codeScraper_file',
@@ -33,7 +34,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   temperature: 0.5,
   maxOutputTokens: 8192,
   thinkingBudget: 0,
-  safetyLevel: 'BLOCK_MEDIUM_AND_ABOVE'
+  safetyLevel: 'BLOCK_MEDIUM_AND_ABOVE',
+  historyDepth: 5 // Default history depth
 };
 
 export const App: React.FC = () => {
@@ -44,12 +46,13 @@ export const App: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([
     {
       role: 'model',
-      content: 'Sistema inicializado. Núcleo Vórtex ativo. Use o seletor acima para alternar entre "Assistente Geral" e "Analista Técnico".',
+      content: 'Sistema inicializado. Núcleo Vórtex ativo.\n\nEstou pronto para atuar como seu **Assistente de Scraping e Engenharia**.\n\nTraga seus arquivos **PDF, JSON, TXT, Markdown ou Código** para análise estrutural, extração de dados ou auditoria de segurança.',
       timestamp: Date.now()
     }
   ]);
   const [inputValue, setInputValue] = useState('');
   const [status, setStatus] = useState<AnalysisStatus>(AnalysisStatus.IDLE);
+  const [sessionUsage, setSessionUsage] = useState<TokenUsage>({ promptTokens: 0, completionTokens: 0, totalTokens: 0 });
   
   // App Modes
   const [chatMode, setChatMode] = useState<'general' | 'analyst'>('general'); // Default to General
@@ -121,6 +124,11 @@ export const App: React.FC = () => {
     localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
   }, [settings]);
 
+  // Reset Split View quando mudar de aba
+  useEffect(() => {
+      setShowLiveBrowser(false);
+  }, [viewMode]);
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
@@ -144,12 +152,22 @@ export const App: React.FC = () => {
         role: 'model',
         content: `Arquivo **${uploadedFile.name}** reconhecido. 
         
-No modo **Analista**, farei auditorias técnicas profundas.
-No modo **Geral**, posso conversar sobre o arquivo se você habilitar a opção "Usar Contexto".`,
+No modo **Analista**, posso extrair estruturas de dados (JSON), resumir documentos (PDF/TXT) ou auditar código.
+No modo **Geral**, posso conversar sobre o conteúdo do arquivo se você habilitar a opção "Usar Contexto".`,
         timestamp: Date.now()
         };
         setMessages(prev => [...prev, initialAnalysisMsg]);
     }
+  };
+
+  const updateUsage = (newUsage?: TokenUsage) => {
+      if (newUsage) {
+          setSessionUsage(prev => ({
+              promptTokens: prev.promptTokens + newUsage.promptTokens,
+              completionTokens: prev.completionTokens + newUsage.completionTokens,
+              totalTokens: prev.totalTokens + newUsage.totalTokens
+          }));
+      }
   };
 
   const handleSystemReboot = () => {
@@ -163,6 +181,7 @@ No modo **Geral**, posso conversar sobre o arquivo se você habilitar a opção 
         setInputValue('');
         setStatus(AnalysisStatus.IDLE);
         setIsSidebarOpen(false);
+        setSessionUsage({ promptTokens: 0, completionTokens: 0, totalTokens: 0 }); // Reset usage stats
         setIsBooting(true); // Trigger Boot Sequence
     }
   };
@@ -183,7 +202,7 @@ No modo **Geral**, posso conversar sobre o arquivo se você habilitar a opção 
 
   const handleExportReport = () => {
     if (messages.length === 0) return;
-    const reportHeader = `# Relatório de Sessão CodeScraper\n**Data:** ${new Date().toLocaleDateString()}\n**Modo:** ${chatMode}\n---\n\n`;
+    const reportHeader = `# Relatório de Sessão CodeScraper\n**Data:** ${new Date().toLocaleDateString()}\n**Modo:** ${chatMode}\n**Total Tokens:** ${sessionUsage.totalTokens}\n---\n\n`;
     const reportContent = messages.map(m => `${m.role === 'user' ? '### 👤 Usuário' : '### 🤖 AI'}\n\n${m.content}`).join('\n\n---\n\n');
     const fullReport = reportHeader + reportContent;
     const blob = new Blob([fullReport], { type: 'text/markdown' });
@@ -218,8 +237,9 @@ No modo **Geral**, posso conversar sobre o arquivo se você habilitar a opção 
              contextPrompt = injectedContext; // Append to prompt
         }
 
-        const aiResponse = await analyzeContent(contentToUse, sourceNameToUse, contextPrompt, messages, systemOverride);
-        const aiMsg: Message = { role: 'model', content: aiResponse, timestamp: Date.now() };
+        const result = await analyzeContent(contentToUse, sourceNameToUse, contextPrompt, messages, systemOverride);
+        const aiMsg: Message = { role: 'model', content: result.text, timestamp: Date.now() };
+        updateUsage(result.usage);
         setMessages(prev => [...prev, aiMsg]);
     } catch (e) {
         console.error(e);
@@ -274,8 +294,9 @@ No modo **Geral**, posso conversar sobre o arquivo se você habilitar a opção 
           systemPrompt = "Você é um assistente de IA útil e versátil. Responda de forma clara e prestativa.";
       }
 
-      const responseText = await analyzeContent(content, sourceName, prompt, messages, systemPrompt);
-      const aiMsg: Message = { role: 'model', content: responseText, timestamp: Date.now() };
+      const result = await analyzeContent(content, sourceName, prompt, messages, systemPrompt);
+      const aiMsg: Message = { role: 'model', content: result.text, timestamp: Date.now() };
+      updateUsage(result.usage);
       setMessages(prev => [...prev, aiMsg]);
 
     } catch (error) {
@@ -331,6 +352,14 @@ No modo **Geral**, posso conversar sobre o arquivo se você habilitar a opção 
 
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
   const showCodePanel = file && ((!isMobile && showPreview && !showLiveBrowser) || (isMobile && mobileTab === 'code'));
+
+  // Shared context for Feedback Widgets
+  const sharedFeedbackContext = {
+      messages,
+      sessionUsage,
+      currentSection: viewMode,
+      fileInfo: file ? `${file.name} (${(file.size/1024).toFixed(1)}kb)` : null,
+  };
 
   const renderChatInterface = () => (
     <div className="flex flex-col h-full w-full relative">
@@ -456,7 +485,7 @@ No modo **Geral**, posso conversar sobre o arquivo se você habilitar a opção 
                 </div>
                 <div className="text-center mt-2 flex items-center justify-center gap-2">
                     <p className="text-[10px] text-[#8e918f]">
-                        {settings.model} • {chatMode === 'general' ? 'General Mode' : 'Analyst Mode'}
+                        {settings.model} • {chatMode === 'general' ? 'General Mode' : 'Analyst Mode'} • Tokens: {sessionUsage.totalTokens}
                     </p>
                 </div>
             </div>
@@ -472,21 +501,28 @@ No modo **Geral**, posso conversar sobre o arquivo se você habilitar a opção 
           <BootSequence onComplete={() => setIsBooting(false)} />
       )}
 
-      <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} settings={settings} onUpdateSettings={(newSettings) => setSettings(prev => ({ ...prev, ...newSettings }))} onExportReport={handleExportReport} />
+      <SettingsModal 
+        isOpen={isSettingsOpen} 
+        onClose={() => setIsSettingsOpen(false)} 
+        settings={settings} 
+        onUpdateSettings={(newSettings) => setSettings(prev => ({ ...prev, ...newSettings }))} 
+        onExportReport={handleExportReport} 
+        sessionUsage={sessionUsage}
+      />
       <PayloadGeneratorModal isOpen={isPayloadModalOpen} onClose={() => setIsPayloadModalOpen(false)} themeColor={isAttackerMode ? 'rose' : 'blue'} />
       
-      {/* SIDEBAR NAVIGATION */}
+      {/* SIDEBAR NAVIGATION - FIX FOR MOBILE Z-INDEX */}
       <div 
-        className={`fixed inset-0 bg-black/60 backdrop-blur-sm z-40 transition-opacity duration-300 ${isSidebarOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
+        className={`fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] transition-opacity duration-300 ${isSidebarOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
         onClick={() => setIsSidebarOpen(false)}
       />
       
       <aside 
-        className={`fixed top-0 left-0 h-full w-80 bg-[#1e1f20] border-r border-[#444746] z-50 transform transition-transform duration-300 ease-out flex flex-col shadow-2xl ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}
+        className={`fixed top-0 left-0 h-full w-80 bg-[#1e1f20] border-r border-[#444746] z-[70] transform transition-transform duration-300 ease-out flex flex-col shadow-2xl ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}
       >
         <div className="p-6 border-b border-[#444746] flex items-center justify-between">
             <h2 className="text-xl font-bold tracking-tight text-[#e3e3e3] flex items-center gap-2">
-                <span className="font-mono text-xl tracking-tighter">_<span className="text-[#a8c7fa]">DnAi</span>&gt;_</span>
+                <span className="font-mono text-xl tracking-tighter">Code<span className="text-[#a8c7fa]">Scraper</span></span>
             </h2>
             <button onClick={() => setIsSidebarOpen(false)} className="p-2 text-[#c4c7c5] hover:text-white rounded-full hover:bg-[#303030]">
                 <PanelLeftClose size={20} />
@@ -525,6 +561,22 @@ No modo **Geral**, posso conversar sobre o arquivo se você habilitar a opção 
                     <span className="font-bold text-sm tracking-wide">Knowledge Base</span>
                 </button>
             </div>
+
+            {/* SIDEBAR SUPPORT BUTTON */}
+            <div className="h-px bg-[#444746] mx-4" />
+            <div className="px-4 py-2">
+                 <p className="text-xs font-bold text-[#8e918f] uppercase tracking-wider mb-2 flex items-center gap-2">
+                    <HelpCircle size={12}/> Suporte
+                 </p>
+                 <FeedbackWidget 
+                    contextData={sharedFeedbackContext} 
+                    trigger={
+                        <button className="w-full mt-1 py-2 bg-[#303030] hover:bg-[#444746] text-[#c4c7c5] hover:text-white rounded-lg text-xs font-bold flex items-center justify-center gap-2 transition-all">
+                            <Mail size={12}/> Reportar Problema
+                        </button>
+                    }
+                 />
+            </div>
         </div>
 
         <div className="p-4 border-t border-[#444746] bg-[#131314] space-y-2">
@@ -555,6 +607,8 @@ No modo **Geral**, posso conversar sobre o arquivo se você habilitar a opção 
         {/* Main App Header */}
         <header className="h-16 px-4 flex items-center justify-between shrink-0 bg-[#131314] border-b border-[#444746]/30">
           <div className="flex items-center gap-3 shrink-0">
+             
+             {/* TOGGLE SIDEBAR (HAMBURGER) */}
              <button 
                 onClick={() => setIsSidebarOpen(true)}
                 className="p-2.5 bg-[#1e1f20] hover:bg-[#303030] text-[#a8c7fa] rounded-full transition-colors border border-[#444746] shadow-sm group"
@@ -563,8 +617,20 @@ No modo **Geral**, posso conversar sobre o arquivo se você habilitar a opção 
                 <Terminal size={20} className="group-hover:scale-110 transition-transform" />
              </button>
 
+             {/* BACK BUTTON (Visible only when not in chat mode) */}
+             {viewMode !== 'chat' && (
+                 <button 
+                    onClick={() => setViewMode('chat')}
+                    className="p-2.5 bg-[#303030] hover:bg-[#444746] text-[#e3e3e3] rounded-full transition-colors border border-[#444746] shadow-sm flex items-center gap-2 animate-fade-in"
+                    title="Voltar ao Chat"
+                 >
+                    <ArrowLeft size={20} />
+                    <span className="hidden md:inline text-xs font-bold">Voltar</span>
+                 </button>
+             )}
+
              {/* Mode Switcher */}
-             <div className="flex items-center bg-[#1e1f20] rounded-full p-1 border border-[#444746]">
+             <div className="hidden md:flex items-center bg-[#1e1f20] rounded-full p-1 border border-[#444746]">
                 <button 
                     onClick={() => setChatMode('general')}
                     className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold transition-all ${chatMode === 'general' ? 'bg-[#a8c7fa] text-[#001d35]' : 'text-[#8e918f] hover:text-[#c4c7c5]'}`}
@@ -581,14 +647,40 @@ No modo **Geral**, posso conversar sobre o arquivo se você habilitar a opção 
           </div>
           
           <div className="flex items-center gap-2 shrink-0">
-            <button onClick={() => setShowLiveBrowser(!showLiveBrowser)} className={`p-2 rounded-full transition-colors ${showLiveBrowser ? 'bg-[#a8c7fa] text-[#001d35]' : 'text-[#c4c7c5] hover:bg-[#303030]'}`} title="Split View">
-                {showLiveBrowser ? <XCircle size={20} /> : <SplitSquareHorizontal size={20} />}
+            {/* Context Feedback Switch (Small Button) */}
+            <FeedbackWidget 
+                contextData={sharedFeedbackContext}
+                trigger={
+                    <button className="p-2.5 bg-[#1e1f20] hover:bg-[#303030] text-[#a8c7fa] rounded-full transition-colors border border-[#444746] shadow-sm" title="Feedback / Reportar Bug">
+                         <Bug size={16} />
+                    </button>
+                }
+            />
+
+            {/* Mobile Mode Switcher (Compact) */}
+            <button 
+                onClick={() => setChatMode(prev => prev === 'general' ? 'analyst' : 'general')}
+                className="md:hidden flex items-center justify-center p-2 rounded-full border border-[#444746] bg-[#1e1f20] text-[#c4c7c5]"
+            >
+                {chatMode === 'general' ? <MessageCircle size={20}/> : <ShieldAlert size={20}/>}
             </button>
             
-            {/* Red Team Toggle (Only visible in Analyst Mode) */}
+            {/* SPLIT VIEW TOGGLE - ONLY IN BROWSER MODE */}
+            {viewMode === 'browser' && (
+                <button 
+                    onClick={() => setShowLiveBrowser(!showLiveBrowser)} 
+                    className={`p-2 rounded-full transition-colors ${showLiveBrowser ? 'bg-[#a8c7fa] text-[#001d35]' : 'text-[#c4c7c5] hover:bg-[#303030]'}`} 
+                    title={showLiveBrowser ? "Fechar Split View" : "Abrir Chat Lateral"}
+                >
+                    {showLiveBrowser ? <XCircle size={20} /> : <SplitSquareHorizontal size={20} />}
+                </button>
+            )}
+            
+            {/* Red Team Toggle (Only visible in Analyst Mode) - AGORA COM TEXTO PARA CONFIRMAÇÃO */}
             {chatMode === 'analyst' && (
-                <button onClick={() => setIsAttackerMode(!isAttackerMode)} className={`flex items-center gap-2 px-3 py-1.5 text-xs font-bold rounded-full border transition-all ${isAttackerMode ? 'bg-red-900/20 border-red-500 text-red-200' : 'bg-[#303030] border-transparent text-[#c4c7c5]'}`}>
-                    {isAttackerMode ? <Swords size={14} /> : <ShieldAlert size={14} />} 
+                <button onClick={() => setIsAttackerMode(!isAttackerMode)} className={`flex items-center gap-2 px-3 py-1.5 text-xs font-bold rounded-full border transition-all ${isAttackerMode ? 'bg-red-900/20 border-red-500 text-red-200' : 'bg-[#303030] border-transparent text-[#c4c7c5]'}`} title={isAttackerMode ? "Desativar Red Team" : "Ativar Red Team"}>
+                    {isAttackerMode ? <Swords size={14} /> : <ShieldAlert size={14} />}
+                    <span className="hidden sm:inline">{isAttackerMode ? "RED TEAM" : "BLUE TEAM"}</span>
                 </button>
             )}
             

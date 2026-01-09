@@ -67,6 +67,15 @@
 </script>
 </head>
   <body>
+    <!-- Netlify Form Detection (Hidden) -->
+    <form name="feedback" netlify netlify-honeypot="bot-field" hidden>
+      <input type="hidden" name="form-name" value="feedback" />
+      <input type="text" name="type" />
+      <input type="email" name="contact" />
+      <textarea name="message"></textarea>
+      <textarea name="technical_report"></textarea>
+    </form>
+
     <div id="root"></div>
     <script type="module" src="/index.tsx"></script>
   </body>

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { X, Save, CheckCircle, Server, Cpu, Key, Globe, ShieldCheck, Sliders, BrainCircuit, Activity, Lock } from 'lucide-react';
-import { AppSettings, LLMProvider } from '../types';
+import { X, Save, CheckCircle, Server, Cpu, Key, Globe, ShieldCheck, Sliders, BrainCircuit, Activity, Lock, Coins, History, BarChart3, AlertTriangle, ChevronDown, Sparkles, Zap, Box, Link } from 'lucide-react';
+import { AppSettings, LLMProvider, TokenUsage } from '../types';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -8,48 +8,51 @@ interface SettingsModalProps {
   settings: AppSettings;
   onUpdateSettings: (newSettings: Partial<AppSettings>) => void;
   onExportReport: () => void;
+  sessionUsage?: TokenUsage;
 }
 
 const PROVIDERS: { id: LLMProvider; name: string; icon: any }[] = [
-  { id: 'google', name: 'DeepMind / Gemini', icon: Globe },
-  { id: 'openai', name: 'OpenAI', icon: Cpu },
+  { id: 'google', name: 'Google Gemini', icon: Globe },
+  { id: 'openai', name: 'OpenAI / Compatible', icon: Cpu },
   { id: 'anthropic', name: 'Anthropic', icon: ShieldCheck },
   { id: 'groq', name: 'Groq (LPU)', icon: Server },
-  { id: 'ollama', name: 'Ollama (Local)', icon: Server },
+  { id: 'ollama', name: 'Ollama (Local)', icon: Box },
 ];
 
-const MODELS: Record<LLMProvider, string[]> = {
+interface ModelOption {
+    id: string;
+    name: string;
+    description: string;
+    badge?: string;
+}
+
+const MODEL_CATALOG: Record<LLMProvider, ModelOption[]> = {
   google: [
-    'gemini-3-flash-preview',
-    'gemini-3-pro-preview',
-    'gemini-2.5-flash-preview',
-    'gemini-2.5-pro-preview',
-    'gemini-1.5-pro',
-    'gemini-1.5-flash'
+    { id: 'gemini-2.0-flash-thinking-exp-01-21', name: 'Gemini 2.0 Flash Thinking', description: 'Raciocínio avançado (CoT). O melhor para lógica complexa e Red Team.', badge: 'NEW' },
+    { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', description: 'Multimodal, extremamente rápido e eficiente. Uso geral.' },
+    { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', description: 'Janela de contexto massiva (2M). Essencial para ler PDFs grandes ou muitos arquivos.' },
+    { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', description: 'Opção econômica e rápida para tarefas simples.' }
   ],
   openai: [
-    'gpt-4o',
-    'gpt-4-turbo',
-    'gpt-4',
-    'gpt-3.5-turbo'
+    { id: 'gpt-4o', name: 'GPT-4o', description: 'O modelo carro-chefe. Rápido e inteligente.' },
+    { id: 'gpt-4-turbo', name: 'GPT-4 Turbo', description: 'Versão anterior robusta com boa janela de contexto.' },
+    { id: 'o1-preview', name: 'o1 Preview', description: 'Raciocínio profundo. Lento, mas excelente para matemática e código complexo.', badge: 'EXPENSIVE' },
+    { id: 'gpt-4o-mini', name: 'GPT-4o Mini', description: 'Alternativa de baixo custo para tarefas rápidas.' }
   ],
   anthropic: [
-    'claude-3-5-sonnet-20240620',
-    'claude-3-opus-20240229',
-    'claude-3-sonnet-20240229',
-    'claude-3-haiku-20240307'
+    { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet', description: 'O melhor para Coding e nuances de texto atualmente.', badge: 'BEST FOR CODE' },
+    { id: 'claude-3-opus-20240229', name: 'Claude 3 Opus', description: 'Alta capacidade literária e criativa.' },
+    { id: 'claude-3-haiku-20240307', name: 'Claude 3 Haiku', description: 'Resposta instantânea.' }
   ],
   groq: [
-    'llama3-70b-8192',
-    'llama3-8b-8192',
-    'mixtral-8x7b-32768',
-    'gemma-7b-it'
+    { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B', description: 'Modelo open-source de ponta rodando em LPU (Hyper Fast).' },
+    { id: 'mixtral-8x7b-32768', name: 'Mixtral 8x7B', description: 'Mistura de especialistas (MoE). Bom balanceamento.' },
+    { id: 'gemma2-9b-it', name: 'Gemma 2 9B', description: 'Modelo leve do Google.' }
   ],
   ollama: [
-    'llama3',
-    'mistral',
-    'codellama',
-    'phi3'
+    { id: 'llama3', name: 'Llama 3', description: 'Standard local model.' },
+    { id: 'mistral', name: 'Mistral', description: 'Eficiente para máquinas menores.' },
+    { id: 'deepseek-r1', name: 'DeepSeek R1', description: 'Raciocínio avançado local (se instalado).' }
   ]
 };
 
@@ -58,10 +61,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onClose,
   settings,
   onUpdateSettings,
-  onExportReport
+  onExportReport,
+  sessionUsage
 }) => {
   const [tempSettings, setTempSettings] = useState<AppSettings>(settings);
   const [isSaved, setIsSaved] = useState(false);
+  const [showModelList, setShowModelList] = useState(true);
 
   useEffect(() => {
     if (isOpen) {
@@ -87,6 +92,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   const currentProvider = tempSettings.provider;
+  const availableModels = MODEL_CATALOG[currentProvider] || [];
+
+  // Generic Cost Estimation (Roughly based on Gemini 1.5 Flash/Pro Blended)
+  const estimateCost = (usage: TokenUsage | undefined) => {
+      if (!usage) return "0.0000";
+      // Assuming a blend or worst case 'Pro' pricing for awareness
+      const inputCost = (usage.promptTokens / 1000000) * 3.50; 
+      const outputCost = (usage.completionTokens / 1000000) * 10.50;
+      return (inputCost + outputCost).toFixed(4);
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md animate-fade-in p-4">
@@ -108,6 +123,32 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           
           {/* Coluna Esquerda: Provedores e Modelos */}
           <div className="space-y-6">
+             {/* COST MONITOR */}
+             <div className="bg-[#1e1f20] p-4 rounded-xl border border-[#444746] relative overflow-hidden">
+                <div className="absolute top-0 right-0 p-2 opacity-10 text-[#6dd58c]">
+                    <Coins size={64} />
+                </div>
+                <div className="flex items-center gap-2 mb-4 text-[#e3e3e3] font-bold text-sm uppercase tracking-wider">
+                    <BarChart3 size={16} className="text-[#6dd58c]"/> Monitor de Consumo (Sessão)
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                    <div>
+                        <div className="text-[10px] text-[#8e918f] uppercase">Total Tokens</div>
+                        <div className="text-xl font-mono text-[#e3e3e3]">{sessionUsage?.totalTokens.toLocaleString() || 0}</div>
+                    </div>
+                    <div>
+                        <div className="text-[10px] text-[#8e918f] uppercase">Custo Est. (USD)</div>
+                        <div className="text-xl font-mono text-[#6dd58c]">${estimateCost(sessionUsage)}</div>
+                    </div>
+                </div>
+                {sessionUsage && sessionUsage.totalTokens > 100000 && (
+                    <div className="mt-3 flex items-center gap-2 text-[10px] text-yellow-400 bg-yellow-900/20 p-2 rounded">
+                        <AlertTriangle size={12}/>
+                        <span>Alto consumo detectado.</span>
+                    </div>
+                )}
+             </div>
+
              <div className="space-y-2">
                 <label className="text-xs font-bold text-[#8e918f] uppercase tracking-wider flex items-center gap-2">
                     <Globe size={14} /> Provedor de IA
@@ -116,7 +157,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                    {PROVIDERS.map((p) => (
                       <button
                         key={p.id}
-                        onClick={() => setTempSettings(prev => ({ ...prev, provider: p.id, model: MODELS[p.id][0] }))}
+                        onClick={() => setTempSettings(prev => ({ ...prev, provider: p.id, model: MODEL_CATALOG[p.id][0]?.id || '' }))}
                         className={`flex items-center gap-2 p-3 rounded-xl border text-sm font-medium transition-all ${
                             tempSettings.provider === p.id 
                             ? 'bg-[#004a77] border-[#7cacf8] text-[#c2e7ff]' 
@@ -129,24 +170,58 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
              </div>
 
-             {/* Model Selection (Input + Datalist for flexibility) */}
+             {/* Enhanced Model Selection */}
              <div>
-                <label className="text-xs font-bold text-[#8e918f] uppercase tracking-wider block mb-2">Modelo Selecionado</label>
-                <input 
-                   list="model-options"
-                   value={tempSettings.model}
-                   onChange={(e) => setTempSettings(prev => ({ ...prev, model: e.target.value }))}
-                   placeholder="Selecione ou digite um modelo..."
-                   className="w-full bg-[#1e1f20] border border-[#444746] rounded-xl p-4 text-[#e3e3e3] text-sm focus:border-[#a8c7fa] focus:outline-none font-mono placeholder-[#444746]"
-                />
-                <datalist id="model-options">
-                   {MODELS[currentProvider]?.map(m => (
-                       <option key={m} value={m} />
-                   ))}
-                </datalist>
-                <p className="text-[10px] text-[#8e918f] mt-1 ml-1">
-                   Você pode digitar um nome de modelo personalizado se ele não estiver na lista.
-                </p>
+                <div className="flex justify-between items-center mb-2">
+                    <label className="text-xs font-bold text-[#8e918f] uppercase tracking-wider block">Modelo Selecionado</label>
+                    <button 
+                        onClick={() => setShowModelList(!showModelList)} 
+                        className="text-[10px] text-[#a8c7fa] hover:underline flex items-center gap-1"
+                    >
+                        {showModelList ? 'Ocultar Lista' : 'Mostrar Lista'} <ChevronDown size={10} className={`transform transition-transform ${showModelList ? 'rotate-180' : ''}`} />
+                    </button>
+                </div>
+
+                {showModelList && (
+                    <div className="bg-[#1e1f20] border border-[#444746] rounded-xl max-h-[220px] overflow-y-auto custom-scrollbar mb-3 shadow-inner">
+                        {availableModels.map((m) => (
+                            <button
+                                key={m.id}
+                                onClick={() => setTempSettings(prev => ({ ...prev, model: m.id }))}
+                                className={`w-full text-left p-3 border-b border-[#444746]/50 last:border-0 hover:bg-[#303030] transition-colors flex items-start justify-between group ${tempSettings.model === m.id ? 'bg-[#303030] ring-1 ring-[#a8c7fa] inset-0' : ''}`}
+                            >
+                                <div>
+                                    <div className={`font-mono text-sm font-bold flex items-center gap-2 ${tempSettings.model === m.id ? 'text-[#a8c7fa]' : 'text-[#e3e3e3]'}`}>
+                                        {m.name}
+                                        {m.badge && (
+                                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-[#444746] text-[#c4c7c5] font-sans font-bold group-hover:bg-[#a8c7fa] group-hover:text-[#001d35] transition-colors">
+                                                {m.badge}
+                                            </span>
+                                        )}
+                                    </div>
+                                    <div className="text-[11px] text-[#8e918f] mt-1 leading-tight group-hover:text-[#c4c7c5]">
+                                        {m.description}
+                                    </div>
+                                    <div className="text-[9px] text-[#444746] mt-1 font-mono">{m.id}</div>
+                                </div>
+                                {tempSettings.model === m.id && <CheckCircle size={16} className="text-[#a8c7fa] shrink-0 mt-1" />}
+                            </button>
+                        ))}
+                    </div>
+                )}
+                
+                {/* Fallback Manual Input */}
+                <div className="relative">
+                    <input 
+                    value={tempSettings.model}
+                    onChange={(e) => setTempSettings(prev => ({ ...prev, model: e.target.value }))}
+                    placeholder="Ou digite o ID do modelo manualmente..."
+                    className="w-full bg-[#1e1f20] border border-[#444746] rounded-xl p-3 text-[#e3e3e3] text-sm focus:border-[#a8c7fa] focus:outline-none font-mono placeholder-[#444746]"
+                    />
+                    <div className="absolute right-3 top-3.5 text-[#444746]">
+                        <Cpu size={14}/>
+                    </div>
+                </div>
              </div>
 
              {/* API Key Input */}
@@ -163,26 +238,46 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 />
              </div>
 
-             {/* Base URL (Optional) */}
-             {(currentProvider === 'ollama' || currentProvider === 'openai') && (
-                 <div>
-                    <label className="text-xs font-bold text-[#8e918f] uppercase tracking-wider block mb-2">Endpoint URL (Opcional)</label>
-                    <input 
-                       type="text"
-                       value={tempSettings.baseUrl || ''}
-                       onChange={(e) => setTempSettings(prev => ({ ...prev, baseUrl: e.target.value }))}
-                       placeholder={currentProvider === 'ollama' ? "http://localhost:11434/v1" : "https://api.openai.com/v1"}
-                       className="w-full bg-[#1e1f20] border border-[#444746] rounded-xl p-4 text-[#e3e3e3] text-sm focus:border-[#a8c7fa] focus:outline-none font-mono"
-                    />
-                 </div>
-             )}
+             {/* Base URL Input (Optional) */}
+             <div>
+                <label className="text-xs font-bold text-[#8e918f] uppercase tracking-wider block mb-2 flex items-center gap-2">
+                   <Link size={14} /> Base URL (Opcional)
+                </label>
+                <input 
+                   type="text"
+                   value={tempSettings.baseUrl || ''}
+                   onChange={(e) => setTempSettings(prev => ({ ...prev, baseUrl: e.target.value }))}
+                   placeholder="Ex: http://localhost:11434/v1 ou https://api.openai.com/v1"
+                   className="w-full bg-[#1e1f20] border border-[#444746] rounded-xl p-4 text-[#e3e3e3] text-sm focus:border-[#a8c7fa] focus:outline-none placeholder-[#444746] font-mono"
+                />
+                <p className="text-[10px] text-[#8e918f] mt-1 ml-1">
+                   Útil para Ollama, LM Studio ou Endpoints OpenAI-Compatible customizados.
+                </p>
+             </div>
           </div>
 
           {/* Coluna Direita: Controles Avançados */}
           <div className="space-y-6">
              <div className="flex items-center gap-2 pb-2 border-b border-[#444746] mb-4">
                  <Sliders size={18} className="text-[#a8c7fa]" />
-                 <h3 className="text-sm font-bold text-[#e3e3e3]">Controles Avançados</h3>
+                 <h3 className="text-sm font-bold text-[#e3e3e3]">Controles Avançados & Limites</h3>
+             </div>
+
+            {/* History Depth */}
+             <div className="bg-[#1e1f20] p-4 rounded-xl border border-[#444746]">
+                <div className="flex justify-between mb-2">
+                    <label className="text-xs font-bold text-[#8e918f] uppercase flex items-center gap-2"><History size={12}/> Profundidade de Histórico</label>
+                    <span className="text-xs font-mono text-[#6dd58c]">{tempSettings.historyDepth || 5} msgs</span>
+                </div>
+                <input 
+                    type="range" min="0" max="20" step="1"
+                    value={tempSettings.historyDepth || 5}
+                    onChange={(e) => setTempSettings(prev => ({ ...prev, historyDepth: parseInt(e.target.value) }))}
+                    className="w-full accent-[#6dd58c] h-2 bg-[#303030] rounded-lg appearance-none cursor-pointer"
+                />
+                <p className="text-[10px] text-[#8e918f] mt-1">
+                    Controla quantas mensagens passadas são enviadas. "0" envia apenas a atual.
+                </p>
              </div>
 
              {/* Temperature */}
@@ -197,7 +292,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     onChange={(e) => setTempSettings(prev => ({ ...prev, temperature: parseFloat(e.target.value) }))}
                     className="w-full accent-[#a8c7fa] h-2 bg-[#303030] rounded-lg appearance-none cursor-pointer"
                 />
-                <p className="text-[10px] text-[#8e918f] mt-1">Valores altos = mais criatividade. Valores baixos = mais determinismo.</p>
              </div>
 
              {/* Max Tokens */}
@@ -226,12 +320,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     onChange={(e) => setTempSettings(prev => ({ ...prev, thinkingBudget: parseInt(e.target.value) }))}
                     className="w-full accent-[#d0bcff] h-2 bg-[#303030] rounded-lg appearance-none cursor-pointer"
                 />
-                <p className="text-[10px] text-[#8e918f] mt-1">Apenas para modelos Gemini 2.5/3. Use 0 para desativar.</p>
              </div>
 
              {/* Safety Level */}
              <div className="bg-[#1e1f20] p-4 rounded-xl border border-[#444746]">
-                <label className="text-xs font-bold text-[#8e918f] uppercase block mb-2 flex items-center gap-2"><Lock size={12}/> Nível de Segurança (Block Level)</label>
+                <label className="text-xs font-bold text-[#8e918f] uppercase block mb-2 flex items-center gap-2"><Lock size={12}/> Nível de Segurança</label>
                 <select 
                     value={tempSettings.safetyLevel}
                     onChange={(e) => setTempSettings(prev => ({ ...prev, safetyLevel: e.target.value as any }))}

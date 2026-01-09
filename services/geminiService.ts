@@ -1,5 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
-import { Message, AppSettings, LLMProvider } from '../types';
+import { Message, AppSettings, LLMProvider, AnalysisResult, TokenUsage } from '../types';
 
 // --- HELPERS DE CONFIGURAÇÃO ---
 const getSettings = (): AppSettings | null => {
@@ -24,26 +24,36 @@ const cleanContentArtifacts = (content: string): string => {
 };
 
 const SYSTEM_INSTRUCTION_ANALYST = `
-Você é o CodeScraper Vórtex, um Analista Sênior de Engenharia e Segurança Ofensiva.
-DIRETRIZES:
-1. Análise técnica profunda (Code Quality, Security, Logic).
-2. Taint Analysis (Source -> Sink).
-3. Classificação CVSS para vulnerabilidades.
-4. Respostas em Markdown estruturado.
-5. Sem floreios. Direto ao ponto.
+Você é o CodeScraper Vórtex, um Analista Sênior de Engenharia de Software, Segurança Ofensiva e Engenharia de Dados.
+
+SUAS CAPACIDADES ESPECIALIZADAS:
+1. **Auditoria de Código:** Análise estática, Security, Clean Code e Performance.
+2. **Engenharia de Scraping:** Se receber HTML/JSON, analise a estrutura DOM/Objeto, sugira seletores (XPath/CSS) e estratégias de extração resilientes.
+3. **Análise de Documentos:** Se receber PDF, TXT ou Markdown, sintetize informações, encontre padrões de dados (Regex) e estruture o conteúdo não estruturado.
+4. **Segurança:** Taint Analysis (Source -> Sink) e classificação CVSS quando aplicável.
+
+DIRETRIZES DE RESPOSTA:
+- Use Markdown estruturado (Títulos, Listas, Blocos de Código).
+- Seja técnico e direto (Sem floreios).
+- Se o usuário enviar um documento, foque no conteúdo e na estrutura de dados dele.
 `;
 
 const SYSTEM_INSTRUCTION_GENERAL = `
 Você é um assistente de IA útil e inteligente integrado à plataforma CodeScraper.
-Se o usuário fornecer contexto de arquivos, use-o para responder perguntas.
-Se não houver contexto, responda como um assistente geral amigável.
-Mantenha respostas claras e concisas.
+Sua função é auxiliar na interpretação de documentos (PDF, TXT, MD), dados (JSON) e código.
+
+Se o usuário fornecer arquivos:
+- Resuma o conteúdo.
+- Responda perguntas específicas sobre os dados do arquivo.
+- Ajude a extrair informações úteis.
+
+Mantenha respostas claras, concisas e formatadas.
 `;
 
 // --- DRIVERS DE API ---
 
 // 1. Google Gemini Driver (SDK)
-const callGoogle = async (apiKey: string, model: string, prompt: string, system: string, settings: AppSettings) => {
+const callGoogle = async (apiKey: string, model: string, prompt: string, system: string, settings: AppSettings): Promise<AnalysisResult> => {
   const ai = new GoogleGenAI({ apiKey });
   
   const safetySettings = [
@@ -69,7 +79,17 @@ const callGoogle = async (apiKey: string, model: string, prompt: string, system:
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
     config: config
   });
-  return response.text || "Sem resposta.";
+
+  const text = response.text || "Sem resposta.";
+  
+  // Extração de Tokens
+  const usage: TokenUsage = {
+      promptTokens: response.usageMetadata?.promptTokenCount || 0,
+      completionTokens: response.usageMetadata?.candidatesTokenCount || 0,
+      totalTokens: response.usageMetadata?.totalTokenCount || 0
+  };
+
+  return { text, usage };
 };
 
 // 2. OpenAI Compatible Driver
@@ -80,7 +100,7 @@ const callOpenAICompatible = async (
   system: string, 
   settings: AppSettings,
   baseUrl: string = 'https://api.openai.com/v1'
-) => {
+): Promise<AnalysisResult> => {
   const response = await fetch(`${baseUrl}/chat/completions`, {
     method: 'POST',
     headers: {
@@ -104,17 +124,25 @@ const callOpenAICompatible = async (
         const err = await response.json();
         errorMessage = err.error?.message || errorMessage;
     } catch (e) {
-        // Ignora erro de parse JSON se falhar
+        // Ignora erro de parse JSON
     }
     throw new Error(errorMessage);
   }
 
   const data = await response.json();
-  return data.choices?.[0]?.message?.content || "Sem resposta.";
+  const text = data.choices?.[0]?.message?.content || "Sem resposta.";
+  
+  const usage: TokenUsage = {
+      promptTokens: data.usage?.prompt_tokens || 0,
+      completionTokens: data.usage?.completion_tokens || 0,
+      totalTokens: data.usage?.total_tokens || 0
+  };
+
+  return { text, usage };
 };
 
 // 3. Anthropic Driver
-const callAnthropic = async (apiKey: string, model: string, prompt: string, system: string, settings: AppSettings) => {
+const callAnthropic = async (apiKey: string, model: string, prompt: string, system: string, settings: AppSettings): Promise<AnalysisResult> => {
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -144,7 +172,15 @@ const callAnthropic = async (apiKey: string, model: string, prompt: string, syst
   }
 
   const data = await response.json();
-  return data.content?.[0]?.text || "Sem resposta.";
+  const text = data.content?.[0]?.text || "Sem resposta.";
+  
+  const usage: TokenUsage = {
+      promptTokens: data.usage?.input_tokens || 0,
+      completionTokens: data.usage?.output_tokens || 0,
+      totalTokens: (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0)
+  };
+
+  return { text, usage };
 };
 
 // --- MAIN DISPATCHER ---
@@ -154,33 +190,35 @@ export const analyzeContent = async (
   prompt: string,
   messages: Message[],
   customSystemPrompt?: string
-): Promise<string> => {
+): Promise<AnalysisResult> => {
   const settings = getSettings();
   
-  if (!settings) return "⚠️ Erro: Configurações não carregadas.";
-  const { provider, model, apiKeys, baseUrl } = settings;
+  if (!settings) return { text: "⚠️ Erro: Configurações não carregadas." };
+  const { provider, model, apiKeys, baseUrl, historyDepth } = settings;
   const apiKey = apiKeys[provider];
 
   if (!apiKey && provider !== 'ollama') {
-    return `⚠️ **Erro de Configuração:** API Key para ${provider.toUpperCase()} não encontrada.`;
+    return { text: `⚠️ **Erro de Configuração:** API Key para ${provider.toUpperCase()} não encontrada.` };
   }
 
   try {
     let finalPrompt = "";
-    const historyContext = messages.slice(-5).map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n---\n');
+    // Limita o histórico baseado na configuração para economizar tokens
+    const depth = historyDepth || 5;
+    const historyContext = messages.slice(-depth).map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n---\n');
 
     if (content && sourceName) {
         const cleanedContent = cleanContentArtifacts(content);
         finalPrompt = `
-          [ALVO: ${sourceName}]
-          === CONTEÚDO TÉCNICO ===
+          [ARQUIVO/DOCUMENTO ATUAL: ${sourceName}]
+          === CONTEÚDO DO DOCUMENTO ===
           ${cleanedContent.slice(0, 90000)}
           === FIM DO CONTEÚDO ===
 
-          HISTÓRICO:
+          HISTÓRICO RECENTE:
           ${historyContext}
           
-          SOLICITAÇÃO:
+          INSTRUÇÃO DO USUÁRIO:
           ${prompt}
         `;
     } else {
@@ -199,7 +237,8 @@ export const analyzeContent = async (
       case 'google':
         return await callGoogle(apiKey, model, finalPrompt, systemInstructionToUse, settings);
       case 'openai':
-        return await callOpenAICompatible(apiKey, model, finalPrompt, systemInstructionToUse, settings, baseUrl);
+        // Use baseUrl from settings if present, otherwise default is used inside function
+        return await callOpenAICompatible(apiKey, model, finalPrompt, systemInstructionToUse, settings, baseUrl || undefined);
       case 'groq':
         return await callOpenAICompatible(apiKey, model, finalPrompt, systemInstructionToUse, settings, 'https://api.groq.com/openai/v1');
       case 'ollama':
@@ -207,11 +246,11 @@ export const analyzeContent = async (
       case 'anthropic':
         return await callAnthropic(apiKey, model, finalPrompt, systemInstructionToUse, settings);
       default:
-        return "Provedor desconhecido.";
+        return { text: "Provedor desconhecido." };
     }
   } catch (error: any) {
     console.error("LLM Error:", error);
-    return `❌ **Erro na API (${provider}):** ${error.message}`;
+    return { text: `❌ **Erro na API (${provider}):** ${error.message}` };
   }
 };
 
@@ -220,11 +259,12 @@ export const queryGeneralChat = async (
     history: Message[],
     customSystemPrompt: string
 ): Promise<string> => {
-    return analyzeContent(null, null, prompt, history, customSystemPrompt || SYSTEM_INSTRUCTION_GENERAL);
+    const result = await analyzeContent(null, null, prompt, history, customSystemPrompt || SYSTEM_INSTRUCTION_GENERAL);
+    return result.text;
 }
 
 // --- AGENT FUNCTIONS ---
-const internalLLMCall = async (prompt: string, jsonMode: boolean = false) => {
+const internalLLMCall = async (prompt: string, jsonMode: boolean = false): Promise<string> => {
     const settings = getSettings();
     if (!settings) throw new Error("Settings missing");
     
@@ -241,19 +281,25 @@ const internalLLMCall = async (prompt: string, jsonMode: boolean = false) => {
     let system = "You are a backend logical processor. Output concise technical data.";
     if (jsonMode) system += " RESPONSE MUST BE VALID JSON.";
 
+    let result: AnalysisResult;
+
     switch (provider) {
       case 'google':
-        return await callGoogle(apiKey, model, prompt, system, agentSettings);
+        result = await callGoogle(apiKey, model, prompt, system, agentSettings);
+        break;
       case 'openai':
       case 'groq':
       case 'ollama':
-         const url = provider === 'groq' ? 'https://api.groq.com/openai/v1' : (baseUrl || (provider === 'ollama' ? 'http://localhost:11434/v1' : 'https://api.openai.com/v1'));
-         return await callOpenAICompatible(apiKey || 'x', model, prompt, system, agentSettings, url);
+         const url = provider === 'groq' ? 'https://api.groq.com/openai/v1' : (baseUrl || (provider === 'ollama' ? 'http://localhost:11434/v1' : undefined));
+         result = await callOpenAICompatible(apiKey || 'x', model, prompt, system, agentSettings, url);
+         break;
       case 'anthropic':
-         return await callAnthropic(apiKey, model, prompt, system, agentSettings);
+         result = await callAnthropic(apiKey, model, prompt, system, agentSettings);
+         break;
       default:
          throw new Error("Provider not supported for agent");
     }
+    return result.text;
 };
 
 export const agentPlan = async (objective: string, context: string, mode: 'RED' | 'BLUE'): Promise<string> => {
